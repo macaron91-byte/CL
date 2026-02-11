@@ -64,34 +64,6 @@ def extraire_regime(nom_fichier):
     
     return None
 
-def detecter_aberrations(df, colonnes_a_verifier, seuil_sigma=3):
-    aberrations = []
-    for col in colonnes_a_verifier:
-        if col not in df.columns or df[col].isna().all():
-            continue
-        valeurs = df[col].dropna()
-        if len(valeurs) < 3:
-            continue
-        moyenne = valeurs.mean()
-        ecart_type = valeurs.std()
-        if ecart_type == 0:
-            continue
-        for idx, val in df[col].items():
-            if pd.notna(val):
-                ecart = abs(val - moyenne) / ecart_type
-                if ecart > seuil_sigma:
-                    aberrations.append({
-                        'ligne': idx + 1,
-                        'parametre': col,
-                        'valeur': float(val),
-                        'moyenne': float(moyenne),
-                        'ecart_type': float(ecart_type),
-                        'nb_ecarts': float(ecart),
-                        'regime': int(df.loc[idx, 'regime_moteur']) if 'regime_moteur' in df.columns else None,
-                        'fichier': df.loc[idx, 'fichier_source'] if 'fichier_source' in df.columns else None
-                    })
-    return aberrations
-
 def analyser_fichiers_liste(fichiers_liste, periode_secondes=60):
     moyennes_fichiers = []
     colonnes_finales = []
@@ -203,7 +175,7 @@ def analyser_fichiers_liste(fichiers_liste, periode_secondes=60):
         moyennes_fichiers.append(moyennes)
     
     if len(moyennes_fichiers) == 0:
-        return None, None, []
+        return None, None
     
     if 'fichier_source' not in colonnes_finales:
         colonnes_finales.append('fichier_source')
@@ -251,16 +223,10 @@ def analyser_fichiers_liste(fichiers_liste, periode_secondes=60):
     
     resultat_final = resultat_final.reindex(columns=colonnes_finales)
     
-    colonnes_a_verifier = ['AVG_PUISSANCE', 'Puissance_moteur', 'Couple_moteur', 
-                           'R_CS.QFUKGH','T_AIR_S_TURBO_A03', 'T_EAU_S_MOTEUR_A08', 
-                           'T_HUILE_MOTEUR_A10',]
-    colonnes_a_verifier = [c for c in colonnes_a_verifier if c in resultat_final.columns]
-    aberrations = detecter_aberrations(resultat_final, colonnes_a_verifier, seuil_sigma=3)
-    
-    print(f"\nAnalyse terminee: {len(resultat_final)} lignes, {len(aberrations)} aberrations")
-    return resultat_final, (colonnes_finales, unites_finales), aberrations
+    print(f"\nAnalyse terminee: {len(resultat_final)} lignes")
+    return resultat_final, (colonnes_finales, unites_finales)
 
-def generer_dashboard_html(resultat_final, colonnes_info, aberrations):
+def generer_dashboard_html(resultat_final, colonnes_info):
     colonnes_finales, unites_finales = colonnes_info
     colonnes_tableau = ['regime_moteur', 'AVG_PUISSANCE', 'T_AMBIANCE_01', 'R_CS.QFUKGH',
                         'TAA_AIR', 'TAA_EAU', 'TAA_HUILE','fichier_source']
@@ -363,11 +329,6 @@ def generer_dashboard_html(resultat_final, colonnes_info, aberrations):
         )
         graphs_html.append(fig.to_json())
     
-    aberrations_dict = {}
-    for ab in aberrations:
-        key = f"{ab['regime']}_{ab['parametre']}"
-        aberrations_dict[key] = True
-    
     html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Dashboard</title>'
     html += '<script src="https://cdn.plot.ly/plotly-2.26.0.min.js"></script>'
     html += '<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>'
@@ -375,17 +336,9 @@ def generer_dashboard_html(resultat_final, colonnes_info, aberrations):
     html += '.container{max-width:1400px;margin:0 auto;background:white;border-radius:15px;padding:30px;}'
     html += 'h1{text-align:center;color:#2c3e50;}table{width:100%;border-collapse:collapse;}'
     html += 'th{background:#667eea;color:white;padding:10px;}td{padding:8px;border-bottom:1px solid #ddd;}'
-    html += '.aberration-cell{background:#ffebee;color:#c62828;font-weight:bold;}'
     html += '.btn{background:#667eea;color:white;border:none;padding:10px 20px;border-radius:5px;cursor:pointer;}'
     html += '</style></head><body><div class="container">'
     html += f'<h1>Dashboard Analyse Moteur</h1><p style="text-align:center;color:#666;">Genere le {datetime.now().strftime("%d/%m/%Y à %H:%M")}</p>'
-    
-    if len(aberrations) > 0:
-        html += f'<div style="background:#fff3cd;padding:15px;margin:20px 0;border-radius:5px;"><h3>{len(aberrations)} aberration(s) detectee(s)</h3>'
-        for ab in aberrations[:5]:
-            html += f'<div style="padding:10px;margin:5px 0;background:white;border-radius:3px;">'
-            html += f'<b>{ab["parametre"]}</b> à {ab["regime"]} tr/min: <span style="color:#c62828;font-weight:bold;">{ab["valeur"]:.2f}</span></div>'
-        html += '</div>'
     
     html += '<button class="btn" onclick="exportToExcel()">Exporter en Excel</button>'
     html += '<table id="syntheseTable"><thead><tr>'
@@ -395,20 +348,17 @@ def generer_dashboard_html(resultat_final, colonnes_info, aberrations):
     
     for idx, row in resultat_final.iterrows():
         html += '<tr>'
-        regime = row.get('regime_moteur', '')
         for col in colonnes_tableau:
             val = row[col]
-            is_aberration = f"{regime}_{col}" in aberrations_dict
-            cell_class = "aberration-cell" if is_aberration else ""
             if pd.notna(val):
                 if col == 'regime_moteur':
-                    html += f'<td class="{cell_class}">{int(val)}</td>'
+                    html += f'<td>{int(val)}</td>'
                 elif col == 'fichier_source':
                     html += f'<td>{val}</td>'
                 else:
-                    html += f'<td class="{cell_class}">{val:.2f}</td>'
+                    html += f'<td>{val:.2f}</td>'
             else:
-                html += f'<td class="{cell_class}">-</td>'
+                html += '<td>-</td>'
         html += '</tr>'
     html += '</tbody></table>'
     
@@ -528,7 +478,7 @@ class InterfaceAnalyse:
     def executer_analyse(self):
         try:
             periode = self.periode_var.get()
-            resultat_final, colonnes_info, aberrations = analyser_fichiers_liste(
+            resultat_final, colonnes_info = analyser_fichiers_liste(
                 self.fichiers_selectionnes, 
                 periode_secondes=periode
             )
@@ -544,21 +494,21 @@ class InterfaceAnalyse:
             nom_fichier_excel = "fichier_concatene_moyennes_complet.xlsx"
             df_export.to_excel(nom_fichier_excel, index=False, header=False)
             
-            html_content = generer_dashboard_html(resultat_final, colonnes_info, aberrations)
+            html_content = generer_dashboard_html(resultat_final, colonnes_info)
             nom_fichier_html = "dashboard_analyse_moteur.html"
             with open(nom_fichier_html, 'w', encoding='utf-8') as f:
                 f.write(html_content)
             
             self.window.after(0, lambda: self.afficher_succes(nom_fichier_excel, nom_fichier_html, 
-                                                              len(resultat_final), len(aberrations)))
+                                                              len(resultat_final)))
         except Exception as e:
             self.window.after(0, lambda: self.afficher_erreur(str(e)))
     
-    def afficher_succes(self, fichier_excel, fichier_html, nb_lignes, nb_aberrations):
+    def afficher_succes(self, fichier_excel, fichier_html, nb_lignes):
         self.progress_bar.stop()
         self.fenetre_prog.destroy()
         message = f"Analyse terminee!\n\nFichiers:\n{fichier_excel}\n{fichier_html}\n\n"
-        message += f"{nb_lignes} lignes, {nb_aberrations} aberrations\n\nOuvrir le dashboard?"
+        message += f"{nb_lignes} lignes\n\nOuvrir le dashboard?"
         if messagebox.askyesno("Termine", message):
             import webbrowser
             webbrowser.open(fichier_html)
