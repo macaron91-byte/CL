@@ -68,16 +68,19 @@ def analyser_fichiers_liste(fichiers_liste, periode_secondes=60):
     moyennes_fichiers = []
     colonnes_finales = []
     unites_finales = []
+    resultats_cv = []
     
     print(f"\nAnalyse de {len(fichiers_liste)} fichiers...")
     print(f"Période de moyennage: {periode_secondes} secondes")
     
     for fichier in fichiers_liste:
         print(f"\nTraitement: {os.path.basename(fichier)}")
+        resultats_cv.append(f"\nTraitement: {os.path.basename(fichier)}")
         try:
             df_full = pd.read_excel(fichier, sheet_name=0, header=None)
         except Exception as e:
             print(f"  Erreur: {e}")
+            resultats_cv.append(f"  Erreur: {e}")
             continue
         
         if len(df_full) < 2:
@@ -153,6 +156,7 @@ def analyser_fichiers_liste(fichiers_liste, periode_secondes=60):
         # Calcul écart-type pour vérifier la stabilité
         ecarts_types = df_numerique[colonnes_numeriques].std(skipna=True)
         print(f"   Vérification de la stabilité:")
+        resultats_cv.append("   Vérification de la stabilité:")
         
         colonnes_importantes = ['T_AMBIANCE_01','T_AIR_E_FILTRE_A01','T_AIR_S_FILTRE_A02','T_AIR_S_TURBO_A03','T_AIR_E_MOTEUR_A04','T_FUEL_E_MOTEUR_A05','T_FUEL_E_RADIA_A06','T_FUEL_S_RADIA_A07','T_EAU_S_MOTEUR_A08', 
                                 'T_EAU_E_MOTEUR_A09','EngineOilTemperature','T_HUILE_TRANS_A11','T_GAZ_ECHAPPEMENT_A15','R_CS.QFUKGH','R_EC.TORQUE','EngSpeed']
@@ -163,11 +167,13 @@ def analyser_fichiers_liste(fichiers_liste, periode_secondes=60):
                 cv = (ecarts_types[col] / abs(moyennes[col].iloc[0])) * 100
                 
                 if cv < 5:
-                    print(f"      ✅ {col}: STABLE (CV={cv:.2f}%)")
+                    message_cv = f"      ✅ {col}: STABLE (CV={cv:.2f}%)"
                 elif cv < 10:
-                    print(f"      ⚠️ {col}: MOYENNEMENT STABLE (CV={cv:.2f}%)")
+                    message_cv = f"      ⚠️ {col}: MOYENNEMENT STABLE (CV={cv:.2f}%)"
                 else:
-                    print(f"      ❌ {col}: INSTABLE (CV={cv:.2f}%)")
+                    message_cv = f"      ❌ {col}: INSTABLE (CV={cv:.2f}%)"
+                print(message_cv)
+                resultats_cv.append(message_cv)
         
         moyennes['fichier_source'] = os.path.basename(fichier)
         regime = extraire_regime(os.path.basename(fichier))
@@ -175,7 +181,7 @@ def analyser_fichiers_liste(fichiers_liste, periode_secondes=60):
         moyennes_fichiers.append(moyennes)
     
     if len(moyennes_fichiers) == 0:
-        return None, None
+        return None, None, resultats_cv
     
     if 'fichier_source' not in colonnes_finales:
         colonnes_finales.append('fichier_source')
@@ -224,7 +230,8 @@ def analyser_fichiers_liste(fichiers_liste, periode_secondes=60):
     resultat_final = resultat_final.reindex(columns=colonnes_finales)
     
     print(f"\nAnalyse terminee: {len(resultat_final)} lignes")
-    return resultat_final, (colonnes_finales, unites_finales)
+    resultats_cv.append(f"\nAnalyse terminee: {len(resultat_final)} lignes")
+    return resultat_final, (colonnes_finales, unites_finales), resultats_cv
 
 def generer_dashboard_html(resultat_final, colonnes_info):
     colonnes_finales, unites_finales = colonnes_info
@@ -478,7 +485,7 @@ class InterfaceAnalyse:
     def executer_analyse(self):
         try:
             periode = self.periode_var.get()
-            resultat_final, colonnes_info = analyser_fichiers_liste(
+            resultat_final, colonnes_info, resultats_cv = analyser_fichiers_liste(
                 self.fichiers_selectionnes, 
                 periode_secondes=periode
             )
@@ -500,11 +507,11 @@ class InterfaceAnalyse:
                 f.write(html_content)
             
             self.window.after(0, lambda: self.afficher_succes(nom_fichier_excel, nom_fichier_html, 
-                                                              len(resultat_final)))
+                                                              len(resultat_final), resultats_cv))
         except Exception as e:
             self.window.after(0, lambda: self.afficher_erreur(str(e)))
     
-    def afficher_succes(self, fichier_excel, fichier_html, nb_lignes):
+    def afficher_succes(self, fichier_excel, fichier_html, nb_lignes, resultats_cv):
         self.progress_bar.stop()
         self.fenetre_prog.destroy()
         message = f"Analyse terminee!\n\nFichiers:\n{fichier_excel}\n{fichier_html}\n\n"
@@ -512,6 +519,30 @@ class InterfaceAnalyse:
         if messagebox.askyesno("Termine", message):
             import webbrowser
             webbrowser.open(fichier_html)
+        self.afficher_resultats_cv(resultats_cv)
+
+    def afficher_resultats_cv(self, resultats_cv):
+        fenetre_cv = tk.Toplevel(self.window)
+        fenetre_cv.title("Résultats de stabilité (CV %)")
+        fenetre_cv.geometry("800x500")
+
+        tk.Label(fenetre_cv, text="Résultats de stabilité (CV %)",
+                 font=("Arial", 14, "bold")).pack(pady=10)
+
+        frame_texte = tk.Frame(fenetre_cv)
+        frame_texte.pack(fill=tk.BOTH, expand=True, padx=15, pady=10)
+
+        scrollbar = tk.Scrollbar(frame_texte)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        texte_cv = tk.Text(frame_texte, wrap=tk.WORD, yscrollcommand=scrollbar.set,
+                           font=("Consolas", 10))
+        texte_cv.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=texte_cv.yview)
+
+        contenu = "\n".join(resultats_cv) if resultats_cv else "Aucun résultat CV disponible."
+        texte_cv.insert(tk.END, contenu)
+        texte_cv.config(state=tk.DISABLED)
     
     def afficher_erreur(self, erreur):
         self.progress_bar.stop()
